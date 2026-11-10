@@ -60,6 +60,7 @@ public:
 #if defined(POCO_OS_FAMILY_UNIX)
 #if !defined(POCO_VXWORKS)
 	void testPermissionsMatchAccess();
+	void testRootCanReadWriteGroupMatch();
 #endif
 	void testGetExecutablePathThreadSafety();
 #endif

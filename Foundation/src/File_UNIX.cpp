@@ -228,6 +228,9 @@ bool FileImpl::canReadImpl() const
 	struct stat st;
 	if (::stat(_path.c_str(), &st) == 0)
 	{
+		// Root bypasses DAC read/write checks. This must run before the
+		// owner/group/other ladder; checking it only in the other class
+		// denies root when the file group matches the process (#5664).
 		if (::geteuid() == 0)
 			return true;
 		return accessAllowed(st, S_IRUSR, S_IRGRP, S_IROTH);

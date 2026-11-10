@@ -478,6 +478,80 @@ void FileTest::testPermissionsMatchAccess()
 	assertTrue (kernelGrants(unowned, R_OK) == f.canRead());
 	assertTrue (kernelGrants(unowned, W_OK) == f.canWrite());
 }
+
+
+void FileTest::testRootCanReadWriteGroupMatch()
+{
+	// The root DAC bypass must be decided before the owner/group/other
+	// ladder. If it is checked only in the other class, a 0700 file whose
+	// group matches the process makes canRead()/canWrite() return false
+	// even though root can read and write it (see #5664).
+	//
+	// Ordinary users cannot construct this fixture (chown), so the test
+	// is skipped when not running as root, and also when chown/chmod or
+	// the kernel itself (for example a container without CAP_DAC_OVERRIDE)
+	// cannot set up a comparable case.
+	if (::geteuid() != 0) return;
+
+	const std::string path = Path::temp() + "poco_filetest_root_5664_" + std::to_string(::getpid()) + ".dat";
+	File f(path);
+	if (f.exists())
+	{
+		::chown(path.c_str(), ::geteuid(), ::getegid());
+		::chmod(path.c_str(), 0600);
+		f.remove();
+	}
+	assertTrue (f.createFile());
+
+	// 65534 is the conventional nobody uid; uid 1 is the usual fallback.
+	uid_t otherUid = 65534;
+	if (otherUid == ::geteuid()) otherUid = 1;
+	if (::chown(path.c_str(), otherUid, ::getegid()) != 0)
+	{
+		otherUid = 1;
+		if (otherUid == ::geteuid() || ::chown(path.c_str(), otherUid, ::getegid()) != 0)
+		{
+			f.remove();
+			return;
+		}
+	}
+	if (::chmod(path.c_str(), 0700) != 0)
+	{
+		::chown(path.c_str(), ::geteuid(), ::getegid());
+		f.remove();
+		return;
+	}
+
+	struct stat st;
+	if (::stat(path.c_str(), &st) != 0
+		|| st.st_uid == ::geteuid()
+		|| st.st_gid != ::getegid()
+		|| (st.st_mode & 0777) != 0700
+		|| !kernelGrants(path, R_OK)
+		|| !kernelGrants(path, W_OK))
+	{
+		::chown(path.c_str(), ::geteuid(), ::getegid());
+		::chmod(path.c_str(), 0600);
+		f.remove();
+		return;
+	}
+
+	assertTrue (f.canRead());
+	assertTrue (f.canWrite());
+	// 0700 still has an execute bit, so root canExecute() stays true.
+	assertTrue (f.canExecute());
+
+	assertTrue (::chmod(path.c_str(), 0600) == 0);
+	assertTrue (f.canRead());
+	assertTrue (f.canWrite());
+	// Root execute still requires at least one execute bit.
+	assertTrue (!f.canExecute());
+
+	::chown(path.c_str(), ::geteuid(), ::getegid());
+	::chmod(path.c_str(), 0600);
+	f.remove();
+}
+
 #endif
 
 
@@ -1353,6 +1427,7 @@ CppUnit::Test* FileTest::suite()
 #if defined(POCO_OS_FAMILY_UNIX)
 #if !defined(POCO_VXWORKS)
 	CppUnit_addTest(pSuite, FileTest, testPermissionsMatchAccess);
+	CppUnit_addTest(pSuite, FileTest, testRootCanReadWriteGroupMatch);
 #endif
 	CppUnit_addTest(pSuite, FileTest, testGetExecutablePathThreadSafety);
 #endif
